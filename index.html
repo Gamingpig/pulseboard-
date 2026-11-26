@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>PulseBoard — Dein lokales Google Health Dashboard</title>
+  <title>PulseBoard — Dein Google Health Dashboard</title>
   <link rel="stylesheet" href="./styles.css" />
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
-  <div class="app-shell">
+  <div class="app-shell" id="appShell">
     <aside class="sidebar">
       <div class="brand">
         <div class="brand-icon">
@@ -18,7 +18,7 @@
         </div>
         <div>
           <div class="brand-name">PulseBoard</div>
-          <div class="brand-sub">100% Lokal im Browser</div>
+          <div class="brand-sub">Google Health · Lokal</div>
         </div>
       </div>
 
@@ -38,17 +38,24 @@
         <button class="nav-item" data-view="workouts">
           <span class="nav-dot"></span> Workouts
         </button>
+        <button class="nav-item" data-view="design">
+          <span class="nav-dot"></span> Design &amp; Theme
+        </button>
         <button class="nav-item" data-view="setup">
-          <span class="nav-dot"></span> Google-Verbindung
+          <span class="nav-dot"></span> Google-Login
         </button>
       </nav>
 
       <div class="sidebar-footer">
         <div id="accountBox" class="account-box">
-          <div class="account-status">
-            <span id="statusBadge" class="badge badge-demo">Demo-Modus</span>
+          <div class="account-header">
+            <img id="userAvatar" class="avatar hidden" alt="Profilbild" />
+            <div>
+              <span id="statusBadge" class="badge badge-offline">Nicht verbunden</span>
+              <div id="userName" class="user-name hidden"></div>
+            </div>
           </div>
-          <p id="accountText" class="account-text">Alle Daten bleiben lokal in deinem Browser (localStorage).</p>
+          <p id="accountText" class="account-text">Melde dich mit deinem Google-Konto an, um deine echten Gesundheitsdaten zu laden.</p>
           <button id="sidebarAuthBtn" class="btn btn-primary btn-full">Mit Google anmelden</button>
         </div>
       </div>
@@ -58,7 +65,7 @@
       <header class="topbar">
         <div>
           <h1 id="pageTitle" class="page-title">Übersicht</h1>
-          <p id="pageSubtitle" class="page-subtitle">Deine Gesundheitsdaten im Überblick</p>
+          <p id="pageSubtitle" class="page-subtitle">Echte Daten aus deinem Google-Health-Konto</p>
         </div>
         <div class="topbar-actions">
           <div class="segmented" id="rangeSelector">
@@ -70,57 +77,76 @@
             JSON Import
             <input type="file" id="takeoutInput" accept=".json" multiple hidden />
           </label>
-          <button id="themeToggle" class="btn btn-ghost" title="Design wechseln">☀️ / 🌙</button>
+          <button id="quickThemeBtn" class="btn btn-ghost" title="Hell / Dunkel wechseln">☀️ / 🌙</button>
         </div>
       </header>
 
       <div id="warningBanner" class="banner hidden"></div>
 
+      <!-- AUTH GATE (wenn nicht angemeldet und kein Import) -->
+      <section id="authGate" class="auth-gate hidden">
+        <div class="card auth-gate-card">
+          <div class="auth-gate-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 21s-7-4.35-9-9.5C1.5 7.5 4.5 4 8 4c2 0 3.5 1 4 2.2C12.5 5 14 4 16 4c3.5 0 6.5 3.5 5 7.5-2 5.15-9 9.5-9 9.5z"/>
+            </svg>
+          </div>
+          <h2>Mit Google anmelden</h2>
+          <p class="card-meta">
+            Dieses Dashboard zeigt <strong>keine Fake-Werte</strong>. Verbinde dein Google-Konto, um deine echten Schritte, Herzfrequenz, Schlafphasen, Kalorien und Workouts direkt aus der Google Health API zu laden – oder importiere eine Google-Takeout-JSON-Datei.
+          </p>
+          <div class="auth-gate-actions">
+            <button id="gateLoginBtn" class="btn btn-emerald">Mit Google anmelden</button>
+            <button id="gateSetupBtn" class="btn btn-ghost">Client ID einrichten</button>
+          </div>
+        </div>
+      </section>
+
       <!-- OVERVIEW VIEW -->
       <section id="view-overview" class="view active">
         <div class="kpi-grid" id="kpiGrid"></div>
 
-        <div class="charts-grid">
-          <div class="card card-wide">
+        <div class="charts-grid" id="overviewRow1">
+          <div class="card card-wide" data-widget="steps">
             <div class="card-header">
               <div>
                 <h3>Schritte pro Tag</h3>
-                <span class="card-meta">Tagesziel: 10.000 Schritte</span>
+                <span class="card-meta" id="stepsGoalLabel">Tagesziel: 10.000 Schritte</span>
               </div>
-              <span id="stepsAvgBadge" class="pill pill-emerald">Ø 0</span>
+              <span id="stepsAvgBadge" class="pill pill-accent">Ø —</span>
             </div>
             <div id="overviewStepsChart" class="chart-box"></div>
           </div>
 
-          <div class="card">
+          <div class="card" data-widget="sleep">
             <div class="card-header">
               <div>
                 <h3>Schlafphasen (Ø)</h3>
                 <span class="card-meta">Verteilung im Zeitraum</span>
               </div>
-              <span id="sleepAvgBadge" class="pill pill-indigo">0h 0m</span>
+              <span id="sleepAvgBadge" class="pill pill-indigo">—</span>
             </div>
             <div id="sleepDonutChart" class="chart-box donut-wrap"></div>
           </div>
         </div>
 
-        <div class="charts-grid">
-          <div class="card">
+        <div class="charts-grid" id="overviewRow2">
+          <div class="card" data-widget="heart">
             <div class="card-header">
               <div>
                 <h3>Ruhepuls &amp; Ø Puls</h3>
                 <span class="card-meta">bpm Verlauf</span>
               </div>
-              <span id="hrAvgBadge" class="pill pill-rose">Ø 0 bpm</span>
+              <span id="hrAvgBadge" class="pill pill-rose">—</span>
             </div>
             <div id="overviewHrChart" class="chart-box"></div>
           </div>
 
-          <div class="card">
+          <div class="card" data-widget="workouts">
             <div class="card-header">
               <div>
                 <h3>Letzte Workouts</h3>
-                <span class="card-meta">Aus Google Health / Fitbit</span>
+                <span class="card-meta">Aus Google Health</span>
               </div>
             </div>
             <div id="overviewWorkouts" class="mini-list"></div>
@@ -136,7 +162,7 @@
             <div class="card-header">
               <div>
                 <h3>Schritte &amp; Aktivitätskalorien</h3>
-                <span class="card-meta">Täglicher Vergleich</span>
+                <span class="card-meta">Täglicher Verlauf</span>
               </div>
             </div>
             <div id="activityStepsChart" class="chart-box tall"></div>
@@ -202,14 +228,108 @@
         </div>
       </section>
 
+      <!-- DESIGN & THEME CUSTOMIZER VIEW -->
+      <section id="view-design" class="view">
+        <div class="setup-grid">
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h3>Theme &amp; Farben</h3>
+                <span class="card-meta">Änderungen werden sofort live übernommen &amp; lokal gespeichert</span>
+              </div>
+            </div>
+            <div class="form-stack">
+              <div class="field">
+                <span>Farbschema (Theme)</span>
+                <div class="chip-group" id="themePresets">
+                  <button type="button" class="chip" data-theme-val="dark">Dark Slate</button>
+                  <button type="button" class="chip" data-theme-val="oled">Midnight OLED</button>
+                  <button type="button" class="chip" data-theme-val="nord">Nordic Blue</button>
+                  <button type="button" class="chip" data-theme-val="light">Light Clean</button>
+                </div>
+              </div>
+
+              <div class="field">
+                <span>Akzentfarbe</span>
+                <div class="color-row">
+                  <div class="chip-group" id="accentPresets">
+                    <button type="button" class="color-dot" data-accent="#10b981" style="background:#10b981" title="Smaragd"></button>
+                    <button type="button" class="color-dot" data-accent="#06b6d4" style="background:#06b6d4" title="Cyan"></button>
+                    <button type="button" class="color-dot" data-accent="#818cf8" style="background:#818cf8" title="Indigo"></button>
+                    <button type="button" class="color-dot" data-accent="#f43f5e" style="background:#f43f5e" title="Rose"></button>
+                    <button type="button" class="color-dot" data-accent="#f59e0b" style="background:#f59e0b" title="Amber"></button>
+                  </div>
+                  <input type="color" id="customAccentInput" value="#10b981" title="Eigene Farbe wählen" />
+                </div>
+              </div>
+
+              <div class="field">
+                <span>Karten-Rundung (<span id="radiusLabel">16px</span>)</span>
+                <input type="range" id="radiusRange" min="4" max="28" step="2" value="16" />
+              </div>
+
+              <div class="field">
+                <span>Layout-Abstand &amp; Stil</span>
+                <div class="chip-group" id="densityPresets">
+                  <button type="button" class="chip" data-density="comfortable">Komfortabel</button>
+                  <button type="button" class="chip" data-density="compact">Kompakt</button>
+                </div>
+              </div>
+
+              <label class="toggle-row">
+                <input type="checkbox" id="glassToggle" />
+                <span>Glasmorphismus-Effekt für Karten aktivieren</span>
+              </label>
+
+              <label class="toggle-row">
+                <input type="checkbox" id="topNavToggle" />
+                <span>Navigation oben statt seitlich anzeigen</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h3>Widgets &amp; Persönliche Ziele</h3>
+                <span class="card-meta">Sichtbare Bereiche und Tagesziele anpassen</span>
+              </div>
+            </div>
+            <div class="form-stack">
+              <div class="field">
+                <span>Sichtbare Übersichts-Widgets</span>
+                <label class="toggle-row"><input type="checkbox" data-widget-toggle="steps" checked /> Schritte-Diagramm</label>
+                <label class="toggle-row"><input type="checkbox" data-widget-toggle="sleep" checked /> Schlafphasen-Donut</label>
+                <label class="toggle-row"><input type="checkbox" data-widget-toggle="heart" checked /> Herzfrequenz-Verlauf</label>
+                <label class="toggle-row"><input type="checkbox" data-widget-toggle="workouts" checked /> Letzte Workouts</label>
+              </div>
+
+              <label class="field">
+                <span>Tägliches Schrittziel</span>
+                <input type="number" id="goalStepsInput" min="1000" max="50000" step="500" value="10000" />
+              </label>
+
+              <label class="field">
+                <span>Schlafziel (Stunden)</span>
+                <input type="number" id="goalSleepInput" min="4" max="12" step="0.5" value="8" />
+              </label>
+
+              <div class="form-actions">
+                <button type="button" id="resetDesignBtn" class="btn btn-ghost">Design zurücksetzen</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- SETUP / GOOGLE CONNECTION VIEW -->
       <section id="view-setup" class="view">
         <div class="setup-grid">
           <div class="card">
             <div class="card-header">
               <div>
-                <h3>Google Health API verbinden (GitHub Pages)</h3>
-                <span class="card-meta">Kein Server, kein Client Secret – läuft rein im Browser</span>
+                <h3>Google Health API verbinden</h3>
+                <span class="card-meta">Einmalig einrichten – läuft danach 100 % lokal im Browser</span>
               </div>
             </div>
             <ol class="setup-steps">
@@ -234,8 +354,8 @@
           <div class="card">
             <div class="card-header">
               <div>
-                <h3>Lokale Einstellungen</h3>
-                <span class="card-meta">Alles wird nur in deinem Browser (localStorage) gespeichert</span>
+                <h3>Anmeldung &amp; Lokaler Speicher</h3>
+                <span class="card-meta">Alle Daten bleiben ausschließlich in deinem Browser (localStorage)</span>
               </div>
             </div>
             <form id="configForm" class="form-stack">
@@ -253,6 +373,11 @@
               </div>
               <p id="configMsg" class="form-msg"></p>
             </form>
+
+            <div class="api-status-box">
+              <div class="card-meta" style="margin-bottom:6px">API-Diagnose (letzter Abruf):</div>
+              <pre id="apiDiagLog" class="diag-log">Noch kein API-Abruf durchgeführt.</pre>
+            </div>
           </div>
         </div>
       </section>
