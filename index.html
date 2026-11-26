@@ -68,6 +68,7 @@
           <p id="pageSubtitle" class="page-subtitle">Echte Daten aus deinem Google-Health-Konto</p>
         </div>
         <div class="topbar-actions">
+          <button id="topbarAuthBtn" class="btn btn-emerald">Mit Google anmelden</button>
           <div class="segmented" id="rangeSelector">
             <button class="seg-btn" data-days="7">7 Tage</button>
             <button class="seg-btn active" data-days="14">14 Tage</button>
@@ -93,12 +94,16 @@
           </div>
           <h2>Mit Google anmelden</h2>
           <p class="card-meta">
-            Dieses Dashboard zeigt <strong>keine Fake-Werte</strong>. Verbinde dein Google-Konto, um deine echten Schritte, Herzfrequenz, Schlafphasen, Kalorien und Workouts direkt aus der Google Health API zu laden – oder importiere eine Google-Takeout-JSON-Datei.
+            Dieses Dashboard zeigt <strong>keine Fake-Werte</strong>. Verbinde dein Google-Konto, um deine echten Gesundheitsdaten zu laden.
           </p>
-          <div class="auth-gate-actions">
-            <button id="gateLoginBtn" class="btn btn-emerald">Mit Google anmelden</button>
-            <button id="gateSetupBtn" class="btn btn-ghost">Client ID einrichten</button>
+          <div class="gate-client-row" id="gateClientRow">
+            <input type="text" id="gateClientIdInput" placeholder="Google Client ID (z. B. 123456-abc.apps.googleusercontent.com)" />
           </div>
+          <div class="auth-gate-actions">
+            <button id="gateLoginBtn" type="button" class="btn btn-emerald">Mit Google anmelden</button>
+            <button id="gateSetupBtn" type="button" class="btn btn-ghost">Anleitung öffnen</button>
+          </div>
+          <p id="gateMsg" class="form-msg" style="margin-top:10px"></p>
         </div>
       </section>
 

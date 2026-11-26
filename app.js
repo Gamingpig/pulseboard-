@@ -579,11 +579,14 @@ function renderDashboard() {
 async function refreshDashboard() {
   const clientId = localStorage.getItem(STORAGE_KEYS.clientId) || '';
   document.getElementById('clientIdInput').value = clientId;
+  const gateInput = document.getElementById('gateClientIdInput');
+  if (gateInput) gateInput.value = clientId;
   document.getElementById('originUriCode').textContent = window.location.origin;
 
   const badge = document.getElementById('statusBadge');
   const accText = document.getElementById('accountText');
   const authBtn = document.getElementById('sidebarAuthBtn');
+  const topbarAuthBtn = document.getElementById('topbarAuthBtn');
   const logoutBtn = document.getElementById('logoutBtn');
   const avatar = document.getElementById('userAvatar');
   const userName = document.getElementById('userName');
@@ -605,6 +608,7 @@ async function refreshDashboard() {
     }
     accText.textContent = userInfo?.email || 'Verbunden (nur lokal im Browser).';
     authBtn.textContent = 'Daten aktualisieren';
+    if (topbarAuthBtn) topbarAuthBtn.textContent = 'Aktualisieren';
     logoutBtn.classList.remove('hidden');
     state.data = await fetchGoogleHealthData(token, state.days);
   } else if (savedTakeout) {
@@ -616,6 +620,7 @@ async function refreshDashboard() {
     userName.classList.add('hidden');
     accText.textContent = 'Importierte Takeout-Daten (nur lokal gespeichert).';
     authBtn.textContent = 'Mit Google anmelden';
+    if (topbarAuthBtn) topbarAuthBtn.textContent = 'Mit Google anmelden';
     logoutBtn.classList.add('hidden');
   } else {
     state.data = null;
@@ -627,6 +632,7 @@ async function refreshDashboard() {
       ? 'Client ID bereit. Jetzt mit Google anmelden.'
       : 'Melde dich mit Google an, um deine echten Werte zu sehen.';
     authBtn.textContent = 'Mit Google anmelden';
+    if (topbarAuthBtn) topbarAuthBtn.textContent = 'Mit Google anmelden';
     logoutBtn.classList.add('hidden');
   }
 
@@ -634,42 +640,72 @@ async function refreshDashboard() {
   if (state.data) renderDashboard();
 }
 
+function showAuthFeedback(msg) {
+  const banner = document.getElementById('warningBanner');
+  banner.textContent = msg;
+  banner.classList.remove('hidden');
+  const gateMsg = document.getElementById('gateMsg');
+  if (gateMsg) gateMsg.textContent = msg;
+  const configMsg = document.getElementById('configMsg');
+  if (configMsg) configMsg.textContent = msg;
+}
+
 function startGoogleLogin() {
+  const gateVal = document.getElementById('gateClientIdInput')?.value?.trim();
+  const setupVal = document.getElementById('clientIdInput')?.value?.trim();
+  if (gateVal) localStorage.setItem(STORAGE_KEYS.clientId, gateVal);
+  else if (setupVal) localStorage.setItem(STORAGE_KEYS.clientId, setupVal);
+
   const clientId = localStorage.getItem(STORAGE_KEYS.clientId);
   if (!clientId) {
-    setView('setup');
-    document.getElementById('configMsg').textContent = 'Bitte zuerst deine Google Client ID speichern.';
-    return;
-  }
-  if (!window.google?.accounts?.oauth2) {
-    setView('setup');
-    document.getElementById('configMsg').textContent = 'Google Identity Script wird noch geladen – bitte kurz erneut versuchen.';
-    return;
-  }
-  state.tokenClient = window.google.accounts.oauth2.initTokenClient({
-    client_id: clientId,
-    scope: GOOGLE_SCOPES,
-    callback: async (resp) => {
-      if (resp.error) {
-        setView('setup');
-        document.getElementById('configMsg').textContent = `OAuth-Fehler: ${resp.error}`;
-        return;
-      }
-      localStorage.setItem(STORAGE_KEYS.token, resp.access_token);
-      localStorage.setItem(STORAGE_KEYS.tokenExp, String(Date.now() + (Number(resp.expires_in || 3600) - 60) * 1000));
-      try {
-        const uRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-          headers: { Authorization: `Bearer ${resp.access_token}` }
-        });
-        if (uRes.ok) localStorage.setItem(STORAGE_KEYS.user, JSON.stringify(await uRes.json()));
-      } catch {
-        // Optional profile info
-      }
-      state.currentView = 'overview';
-      await refreshDashboard();
+    showAuthFeedback('Bitte füge zuerst deine Google Client ID oben ein (siehe „Anleitung öffnen“ unter Google-Login).');
+    const gateInput = document.getElementById('gateClientIdInput');
+    if (gateInput && !document.getElementById('authGate').classList.contains('hidden')) {
+      gateInput.focus();
+    } else {
+      setView('setup');
+      document.getElementById('clientIdInput')?.focus();
     }
-  });
-  state.tokenClient.requestAccessToken({ prompt: 'consent' });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    return;
+  }
+
+  if (!window.google?.accounts?.oauth2) {
+    showAuthFeedback('Google Login-Skript lädt noch oder wird blockiert (z. B. AdBlocker). Bitte in 2 Sekunden erneut klicken.');
+    return;
+  }
+
+  try {
+    state.tokenClient = window.google.accounts.oauth2.initTokenClient({
+      client_id: clientId,
+      scope: GOOGLE_SCOPES,
+      callback: async (resp) => {
+        if (resp.error) {
+          showAuthFeedback(`Google OAuth-Fehler: ${resp.error_description || resp.error}`);
+          return;
+        }
+        document.getElementById('warningBanner').classList.add('hidden');
+        localStorage.setItem(STORAGE_KEYS.token, resp.access_token);
+        localStorage.setItem(STORAGE_KEYS.tokenExp, String(Date.now() + (Number(resp.expires_in || 3600) - 60) * 1000));
+        try {
+          const uRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+            headers: { Authorization: `Bearer ${resp.access_token}` }
+          });
+          if (uRes.ok) localStorage.setItem(STORAGE_KEYS.user, JSON.stringify(await uRes.json()));
+        } catch {
+          // Optional profile info
+        }
+        state.currentView = 'overview';
+        await refreshDashboard();
+      },
+      error_callback: (err) => {
+        showAuthFeedback(`Google Popup-Fehler: ${err?.message || err?.type || 'Popup blockiert oder geschlossen'}`);
+      }
+    });
+    state.tokenClient.requestAccessToken({ prompt: 'consent' });
+  } catch (err) {
+    showAuthFeedback(`Login-Fehler: ${err.message}`);
+  }
 }
 
 // Navigation & Auth Events
@@ -689,6 +725,10 @@ document.getElementById('quickThemeBtn').addEventListener('click', () => {
 });
 
 document.getElementById('sidebarAuthBtn').addEventListener('click', () => {
+  if (getValidToken()) return refreshDashboard();
+  startGoogleLogin();
+});
+document.getElementById('topbarAuthBtn').addEventListener('click', () => {
   if (getValidToken()) return refreshDashboard();
   startGoogleLogin();
 });
