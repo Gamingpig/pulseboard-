@@ -479,7 +479,7 @@ function renderSleepDonut(containerId, days) {
   }).join('');
 
   el.innerHTML = `
-    <svg viewBox="0 0 150 150" style="width:150px;height:150px;flex-shrink:0">
+    <svg viewBox="0 0 150 150" style="width:125px;height:125px;flex-shrink:0">
       ${arcs}
       <text x="75" y="79" text-anchor="middle" fill="var(--text)" font-size="14" font-weight="700">${fmtSleep(avgSleep)}</text>
     </svg>
@@ -528,7 +528,7 @@ function renderDashboard() {
     { name: 'Ruhepuls', color: 'var(--rose)', get: (d) => d.restingHr }
   ]);
 
-  document.getElementById('overviewWorkouts').innerHTML = workouts.slice(0, 4).map((w) => `
+  document.getElementById('overviewWorkouts').innerHTML = workouts.slice(0, 3).map((w) => `
     <div class="mini-item">
       <div><strong>${w.type}</strong><div class="mini-item-sub">${shortDate(w.date)} · ${w.durationMin} Min</div></div>
       <div><strong>${fmtNum(w.calories)} kcal</strong></div>
@@ -731,6 +731,7 @@ document.querySelectorAll('#rangeSelector .seg-btn').forEach((btn) => {
   });
 });
 
+document.getElementById('quickDesignBtn').addEventListener('click', () => setView('design'));
 document.getElementById('quickThemeBtn').addEventListener('click', () => {
   state.design.theme = state.design.theme === 'light' ? 'dark' : 'light';
   saveAndApplyDesign();
