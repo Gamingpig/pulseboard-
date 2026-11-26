@@ -1,0 +1,5 @@
+# Persoenliche Konfiguration & Tokens nicht committen
+.env
+.local-config.json
+.tokens.json
+node_modules/
