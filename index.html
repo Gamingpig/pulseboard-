@@ -69,11 +69,6 @@
         </div>
         <div class="topbar-actions">
           <button id="topbarAuthBtn" class="btn btn-emerald">Mit Google anmelden</button>
-          <div class="segmented" id="rangeSelector">
-            <button class="seg-btn" data-days="7">7 Tage</button>
-            <button class="seg-btn active" data-days="14">14 Tage</button>
-            <button class="seg-btn" data-days="30">30 Tage</button>
-          </div>
           <label class="btn btn-ghost" title="Fitbit / Google Takeout JSON importieren">
             JSON Import
             <input type="file" id="takeoutInput" accept=".json" multiple hidden />
@@ -111,6 +106,20 @@
       <!-- OVERVIEW VIEW -->
       <section id="view-overview" class="view active">
         <div class="kpi-grid" id="kpiGrid"></div>
+
+        <div class="graph-toolbar" id="graphToolbar">
+          <div class="period-nav">
+            <button type="button" class="arrow-btn" id="prevPeriodBtn" title="Zurück">◀</button>
+            <span class="period-label" id="periodLabel">Letzte 7 Tage</span>
+            <button type="button" class="arrow-btn" id="nextPeriodBtn" title="Vor">▶</button>
+          </div>
+          <div class="segmented" id="granularitySelector">
+            <button class="seg-btn" data-gran="day">Tag</button>
+            <button class="seg-btn active" data-gran="week">Woche</button>
+            <button class="seg-btn" data-gran="month">Monat</button>
+            <button class="seg-btn" data-gran="year">Jahr</button>
+          </div>
+        </div>
 
         <div class="charts-grid" id="overviewRow1">
           <div class="card card-wide" data-widget="steps">

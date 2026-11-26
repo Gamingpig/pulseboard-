@@ -33,7 +33,8 @@ const DEFAULT_DESIGN = {
 };
 
 const state = {
-  days: 14,
+  granularity: 'week', // 'day' | 'week' | 'month' | 'year'
+  offset: 0,           // 0 = aktuell, -1 = vorheriger Zeitraum, usw.
   data: null,
   tokenClient: null,
   currentView: 'overview',
@@ -53,10 +54,46 @@ const VIEW_META = {
 const fmtNum = (n) => (n == null ? '—' : new Intl.NumberFormat('de-DE').format(Math.round(n)));
 const fmtSleep = (mins) => (!mins ? '—' : `${Math.floor(mins / 60)}h ${Math.round(mins % 60)}m`);
 const shortDate = (iso) => {
+  if (String(iso).length === 7) {
+    const [y, m] = iso.split('-');
+    return `${m}/${y.slice(2)}`;
+  }
+  if (String(iso).includes('T') && String(iso).length > 10) {
+    return `${String(iso).slice(11, 13)}:00`;
+  }
   const [y, m, d] = String(iso).slice(0, 10).split('-');
   return d && m ? `${d}.${m}.` : iso;
 };
 const toDayKey = (iso) => String(iso || '').slice(0, 10);
+
+function getPeriodRange() {
+  const now = new Date();
+  const end = new Date(now);
+  end.setHours(23, 59, 59, 999);
+  let days = 7;
+
+  if (state.granularity === 'day') {
+    days = 1;
+    end.setDate(end.getDate() + state.offset);
+  } else if (state.granularity === 'week') {
+    days = 7;
+    end.setDate(end.getDate() + state.offset * 7);
+  } else if (state.granularity === 'month') {
+    days = 30;
+    end.setDate(end.getDate() + state.offset * 30);
+  } else if (state.granularity === 'year') {
+    days = 365;
+    end.setDate(end.getDate() + state.offset * 365);
+  }
+
+  const start = new Date(end.getTime() - (days - 1) * 86400000);
+  start.setHours(0, 0, 0, 0);
+  const label = state.granularity === 'day'
+    ? (state.offset === 0 ? `Heute (${shortDate(end.toISOString())})` : end.toLocaleDateString('de-DE'))
+    : `${shortDate(start.toISOString())} – ${shortDate(end.toISOString())}`;
+
+  return { start, end, days, label };
+}
 
 function loadDesign() {
   try {
@@ -151,7 +188,7 @@ function getValidToken() {
 }
 
 // Chunked rollUp (Google Health API limits total-calories & active-energy-burned to 14 days per call)
-async function rollUpMetric(token, dataType, startTime, endTime) {
+async function rollUpMetric(token, dataType, startTime, endTime, windowSize = '86400s') {
   const startMs = new Date(startTime).getTime();
   const endMs = new Date(endTime).getTime();
   const maxChunkMs = 13 * 86400000;
@@ -164,7 +201,7 @@ async function rollUpMetric(token, dataType, startTime, endTime) {
       const url = `https://health.googleapis.com/v4/users/me/dataTypes/${encodeURIComponent(dataType)}/dataPoints:rollUp`;
       const body = {
         range: { startTime: new Date(cur).toISOString(), endTime: new Date(chunkEnd).toISOString() },
-        windowSize: '86400s'
+        windowSize
       };
       if (pageToken) body.pageToken = pageToken;
       const res = await fetch(url, {
@@ -182,6 +219,40 @@ async function rollUpMetric(token, dataType, startTime, endTime) {
     } while (pageToken);
   }
   return { rollupDataPoints: allPoints };
+}
+
+async function listSleepPoints(token, startTime, endTime) {
+  const allPoints = [];
+  let pageToken = null;
+  let useReconcile = true;
+
+  do {
+    const params = new URLSearchParams({
+      pageSize: '100',
+      filter: `sleep.interval.end_time >= "${startTime}" AND sleep.interval.end_time < "${endTime}"`
+    });
+    if (pageToken) params.set('pageToken', pageToken);
+
+    const endpoint = useReconcile ? 'dataPoints:reconcile' : 'dataPoints';
+    const url = `https://health.googleapis.com/v4/users/me/dataTypes/sleep/${endpoint}?${params}`;
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+
+    if (!res.ok) {
+      if (useReconcile && (res.status === 400 || res.status === 404)) {
+        useReconcile = false;
+        pageToken = null;
+        continue;
+      }
+      const txt = await res.text();
+      return { error: `sleep: HTTP ${res.status}`, details: txt, dataPoints: allPoints };
+    }
+
+    const json = await res.json();
+    allPoints.push(...(json.dataPoints || []));
+    pageToken = json.nextPageToken || null;
+  } while (pageToken && allPoints.length < 500);
+
+  return { dataPoints: allPoints };
 }
 
 async function listDataPoints(token, dataType, startTime, endTime) {
@@ -217,25 +288,25 @@ async function listDataPoints(token, dataType, startTime, endTime) {
   return { dataPoints: allPoints };
 }
 
-async function fetchGoogleHealthData(token, days) {
-  const end = new Date();
-  const start = new Date(end.getTime() - days * 86400000);
-  start.setUTCHours(0, 0, 0, 0);
+async function fetchGoogleHealthData(token) {
+  const { start, end, days } = getPeriodRange();
   const startIso = start.toISOString();
   const endIso = end.toISOString();
+  const isHourly = state.granularity === 'day';
+  const windowSize = isHourly ? '3600s' : '86400s';
 
   const [
     stepsRes, caloriesRes, activeCaloriesRes, distanceRes, hrRes,
     restingHrRes, spo2Res, sleepRes, exerciseRes, weightRes
   ] = await Promise.all([
-    rollUpMetric(token, 'steps', startIso, endIso),
-    rollUpMetric(token, 'total-calories', startIso, endIso),
-    rollUpMetric(token, 'active-energy-burned', startIso, endIso),
-    rollUpMetric(token, 'distance', startIso, endIso),
-    rollUpMetric(token, 'heart-rate', startIso, endIso),
+    rollUpMetric(token, 'steps', startIso, endIso, windowSize),
+    rollUpMetric(token, 'total-calories', startIso, endIso, windowSize),
+    rollUpMetric(token, 'active-energy-burned', startIso, endIso, windowSize),
+    rollUpMetric(token, 'distance', startIso, endIso, windowSize),
+    rollUpMetric(token, 'heart-rate', startIso, endIso, windowSize),
     listDataPoints(token, 'daily-resting-heart-rate', startIso, endIso),
     listDataPoints(token, 'daily-oxygen-saturation', startIso, endIso),
-    listDataPoints(token, 'sleep', startIso, endIso),
+    listSleepPoints(token, startIso, endIso),
     listDataPoints(token, 'exercise', startIso, endIso),
     listDataPoints(token, 'weight', startIso, endIso)
   ]);
@@ -254,32 +325,54 @@ async function fetchGoogleHealthData(token, days) {
   ].map(([name, count, err]) => `${name}: ${err ? err : `${count || 0} Einträge`}`);
   document.getElementById('apiDiagLog').textContent = diagLines.join('\n');
 
+  const bucketKey = (iso) => {
+    const s = String(iso || '');
+    if (isHourly) return s.slice(0, 13); // YYYY-MM-DDTHH
+    if (state.granularity === 'year') return s.slice(0, 7); // YYYY-MM
+    return s.slice(0, 10); // YYYY-MM-DD
+  };
+
   const dayMap = new Map();
-  for (let i = days - 1; i >= 0; i--) {
-    const key = new Date(end.getTime() - i * 86400000).toISOString().slice(0, 10);
-    dayMap.set(key, {
-      date: key, steps: 0, calories: 0, activeCalories: 0, distanceKm: 0,
-      hrAvg: null, hrMin: null, hrMax: null, restingHr: null, spo2: null,
-      sleepMinutes: 0, sleepDeepMin: 0, sleepRemMin: 0, sleepLightMin: 0, sleepAwakeMin: 0, weightKg: null
-    });
+  const makeBucket = (date) => ({
+    date, steps: 0, calories: 0, activeCalories: 0, distanceKm: 0,
+    hrAvg: null, hrMin: null, hrMax: null, restingHr: null, spo2: null,
+    sleepMinutes: 0, sleepDeepMin: 0, sleepRemMin: 0, sleepLightMin: 0, sleepAwakeMin: 0, weightKg: null
+  });
+
+  if (isHourly) {
+    for (let h = 0; h < 24; h++) {
+      const k = `${startIso.slice(0, 10)}T${String(h).padStart(2, '0')}`;
+      dayMap.set(k, makeBucket(k));
+    }
+  } else if (state.granularity === 'year') {
+    for (let m = 11; m >= 0; m--) {
+      const d = new Date(end.getFullYear(), end.getMonth() - m, 1);
+      const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      dayMap.set(k, makeBucket(k));
+    }
+  } else {
+    for (let i = days - 1; i >= 0; i--) {
+      const key = new Date(end.getTime() - i * 86400000).toISOString().slice(0, 10);
+      dayMap.set(key, makeBucket(key));
+    }
   }
 
   for (const pt of stepsRes.rollupDataPoints || []) {
-    const e = dayMap.get(toDayKey(pt.startTime));
+    const e = dayMap.get(bucketKey(pt.startTime));
     if (e && pt.steps?.countSum != null) e.steps += Number(pt.steps.countSum);
   }
   for (const pt of caloriesRes.rollupDataPoints || []) {
-    const e = dayMap.get(toDayKey(pt.startTime));
+    const e = dayMap.get(bucketKey(pt.startTime));
     const v = pt.totalCalories?.kcalSum ?? pt.totalCalories?.caloriesSum;
     if (e && v != null) e.calories += Math.round(Number(v));
   }
   for (const pt of activeCaloriesRes.rollupDataPoints || []) {
-    const e = dayMap.get(toDayKey(pt.startTime));
+    const e = dayMap.get(bucketKey(pt.startTime));
     const v = pt.activeEnergyBurned?.kcalSum ?? pt.activeEnergyBurned?.caloriesSum;
     if (e && v != null) e.activeCalories += Math.round(Number(v));
   }
   for (const pt of distanceRes.rollupDataPoints || []) {
-    const e = dayMap.get(toDayKey(pt.startTime));
+    const e = dayMap.get(bucketKey(pt.startTime));
     const mm = pt.distance?.millimetersSum;
     const m = pt.distance?.metersSum;
     if (e && (mm != null || m != null)) {
@@ -287,7 +380,7 @@ async function fetchGoogleHealthData(token, days) {
     }
   }
   for (const pt of hrRes.rollupDataPoints || []) {
-    const e = dayMap.get(toDayKey(pt.startTime));
+    const e = dayMap.get(bucketKey(pt.startTime));
     if (e && pt.heartRate) {
       e.hrAvg = pt.heartRate.beatsPerMinuteAvg ?? e.hrAvg;
       e.hrMin = pt.heartRate.beatsPerMinuteMin ?? e.hrMin;
@@ -295,39 +388,55 @@ async function fetchGoogleHealthData(token, days) {
     }
   }
   for (const pt of restingHrRes.dataPoints || []) {
-    const e = dayMap.get(toDayKey(pt.startTime || pt.interval?.startTime || pt.sample?.time));
+    const e = dayMap.get(bucketKey(pt.startTime || pt.interval?.startTime || pt.sample?.time));
     const bpm = pt.dailyRestingHeartRate?.beatsPerMinute;
     if (e && bpm != null) e.restingHr = Math.round(Number(bpm));
   }
   for (const pt of spo2Res.dataPoints || []) {
-    const e = dayMap.get(toDayKey(pt.startTime || pt.interval?.startTime || pt.sample?.time));
+    const e = dayMap.get(bucketKey(pt.startTime || pt.interval?.startTime || pt.sample?.time));
     const pct = pt.dailyOxygenSaturation?.averagePercentage ?? pt.dailyOxygenSaturation?.percentage;
     if (e && pct != null) e.spo2 = Number(Number(pct).toFixed(1));
   }
   for (const pt of weightRes.dataPoints || []) {
-    const e = dayMap.get(toDayKey(pt.time || pt.sample?.time || pt.startTime || pt.interval?.startTime));
+    const e = dayMap.get(bucketKey(pt.time || pt.sample?.time || pt.startTime || pt.interval?.startTime));
     const grams = pt.weight?.grams ?? (pt.weight?.kilograms != null ? Number(pt.weight.kilograms) * 1000 : null);
     if (e && grams != null) e.weightKg = Number((Number(grams) / 1000).toFixed(1));
   }
   for (const pt of sleepRes.dataPoints || []) {
     const sleep = pt.sleep || {};
-    const startT = pt.startTime || pt.interval?.startTime || sleep.startTime;
-    const endT = pt.endTime || pt.interval?.endTime || sleep.endTime;
-    const e = dayMap.get(toDayKey(endT || startT));
+    const startT = sleep.interval?.startTime || pt.startTime || pt.interval?.startTime || sleep.startTime;
+    const endT = sleep.interval?.endTime || pt.endTime || pt.interval?.endTime || sleep.endTime;
+    const e = dayMap.get(bucketKey(endT || startT));
     if (!e) continue;
-    if (startT && endT) {
+
+    const summary = sleep.summary || {};
+    if (summary.minutesAsleep != null) {
+      e.sleepMinutes += Number(summary.minutesAsleep);
+    } else if (startT && endT) {
       e.sleepMinutes += Math.max(0, Math.round((new Date(endT) - new Date(startT)) / 60000));
     }
-    for (const s of sleep.stages || sleep.sleepStages || []) {
-      const sStart = s.startTime || s.interval?.startTime;
-      const sEnd = s.endTime || s.interval?.endTime;
-      if (!sStart || !sEnd) continue;
-      const dur = Math.max(0, Math.round((new Date(sEnd) - new Date(sStart)) / 60000));
-      const t = String(s.type || s.stageType || '').toUpperCase();
-      if (t.includes('DEEP')) e.sleepDeepMin += dur;
-      else if (t.includes('REM')) e.sleepRemMin += dur;
-      else if (t.includes('LIGHT')) e.sleepLightMin += dur;
-      else if (t.includes('AWAKE')) e.sleepAwakeMin += dur;
+
+    if (Array.isArray(summary.stagesSummary) && summary.stagesSummary.length) {
+      for (const st of summary.stagesSummary) {
+        const mins = Number(st.minutes || 0);
+        const t = String(st.type || '').toUpperCase();
+        if (t === 'DEEP') e.sleepDeepMin += mins;
+        else if (t === 'REM') e.sleepRemMin += mins;
+        else if (t === 'LIGHT') e.sleepLightMin += mins;
+        else if (t === 'AWAKE') e.sleepAwakeMin += mins;
+      }
+    } else {
+      for (const s of sleep.stages || sleep.sleepStages || []) {
+        const sStart = s.startTime || s.interval?.startTime;
+        const sEnd = s.endTime || s.interval?.endTime;
+        if (!sStart || !sEnd) continue;
+        const dur = Math.max(0, Math.round((new Date(sEnd) - new Date(sStart)) / 60000));
+        const t = String(s.type || s.stageType || '').toUpperCase();
+        if (t.includes('DEEP')) e.sleepDeepMin += dur;
+        else if (t.includes('REM')) e.sleepRemMin += dur;
+        else if (t.includes('LIGHT')) e.sleepLightMin += dur;
+        else if (t.includes('AWAKE')) e.sleepAwakeMin += dur;
+      }
     }
   }
 
@@ -647,10 +756,11 @@ async function refreshDashboard() {
     authBtn.textContent = 'Daten aktualisieren';
     if (topbarAuthBtn) topbarAuthBtn.textContent = 'Aktualisieren';
     logoutBtn.classList.remove('hidden');
-    state.data = await fetchGoogleHealthData(token, state.days);
+    state.data = await fetchGoogleHealthData(token);
   } else if (savedTakeout) {
     const parsed = JSON.parse(savedTakeout);
-    state.data = { ...parsed, days: (parsed.days || []).slice(-state.days) };
+    const { days } = getPeriodRange();
+    state.data = { ...parsed, days: (parsed.days || []).slice(-days) };
     badge.textContent = 'Lokaler Import';
     badge.className = 'badge badge-demo';
     avatar.classList.add('hidden');
@@ -674,6 +784,11 @@ async function refreshDashboard() {
   }
 
   setView(state.currentView);
+  const { label } = getPeriodRange();
+  const periodLabel = document.getElementById('periodLabel');
+  if (periodLabel) periodLabel.textContent = label;
+  const nextBtn = document.getElementById('nextPeriodBtn');
+  if (nextBtn) nextBtn.disabled = state.offset >= 0;
   if (state.data) renderDashboard();
 }
 
@@ -722,13 +837,25 @@ function startGoogleLogin() {
 
 // Navigation & Auth Events
 document.querySelectorAll('.nav-item').forEach((btn) => btn.addEventListener('click', () => setView(btn.dataset.view)));
-document.querySelectorAll('#rangeSelector .seg-btn').forEach((btn) => {
+document.querySelectorAll('#granularitySelector .seg-btn').forEach((btn) => {
   btn.addEventListener('click', async () => {
-    document.querySelectorAll('#rangeSelector .seg-btn').forEach((b) => b.classList.remove('active'));
+    document.querySelectorAll('#granularitySelector .seg-btn').forEach((b) => b.classList.remove('active'));
     btn.classList.add('active');
-    state.days = Number(btn.dataset.days);
+    state.granularity = btn.dataset.gran;
+    state.offset = 0;
     await refreshDashboard();
   });
+});
+
+document.getElementById('prevPeriodBtn').addEventListener('click', async () => {
+  state.offset -= 1;
+  await refreshDashboard();
+});
+
+document.getElementById('nextPeriodBtn').addEventListener('click', async () => {
+  if (state.offset >= 0) return;
+  state.offset += 1;
+  await refreshDashboard();
 });
 
 document.getElementById('quickDesignBtn').addEventListener('click', () => setView('design'));

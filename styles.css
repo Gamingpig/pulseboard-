@@ -291,8 +291,43 @@ body {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 12px;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
+
+.graph-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.period-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 3px 6px;
+}
+
+.arrow-btn {
+  border: none;
+  background: var(--surface-2);
+  color: var(--text);
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 0.78rem;
+  display: grid;
+  place-items: center;
+}
+.arrow-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); }
+.arrow-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.period-label { font-size: 0.84rem; font-weight: 600; min-width: 145px; text-align: center; }
 
 .kpi-card {
   background: var(--surface);
