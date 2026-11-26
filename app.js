@@ -17,8 +17,11 @@ const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/googlehealth.profile.readonly'
 ].join(' ');
 
+// Optional: Eigene Google Client ID hier eintragen, damit der Login sofort ohne Eingabefeld startet
+const PRECONFIGURED_CLIENT_ID = '';
+
 const DEFAULT_DESIGN = {
-  theme: 'dark',
+  theme: 'system',
   accent: '#10b981',
   radius: 16,
   density: 'comfortable',
@@ -73,10 +76,17 @@ function saveAndApplyDesign() {
   applyDesign();
 }
 
+function resolveTheme(theme) {
+  if (theme === 'system') {
+    return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  }
+  return theme;
+}
+
 function applyDesign() {
   const d = state.design;
   const html = document.documentElement;
-  html.dataset.theme = d.theme;
+  html.dataset.theme = resolveTheme(d.theme);
   html.dataset.density = d.density;
   html.dataset.glass = String(Boolean(d.glass));
   html.style.setProperty('--accent', d.accent);
@@ -576,12 +586,39 @@ function renderDashboard() {
   }
 }
 
+async function handleOAuthRedirectHash() {
+  if (!window.location.hash || !window.location.hash.includes('access_token=')) return;
+  const params = new URLSearchParams(window.location.hash.slice(1));
+  const accessToken = params.get('access_token');
+  const expiresIn = Number(params.get('expires_in') || 3600);
+  if (!accessToken) return;
+
+  localStorage.setItem(STORAGE_KEYS.token, accessToken);
+  localStorage.setItem(STORAGE_KEYS.tokenExp, String(Date.now() + (expiresIn - 60) * 1000));
+  history.replaceState(null, '', window.location.pathname + window.location.search);
+
+  try {
+    const uRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+    if (uRes.ok) localStorage.setItem(STORAGE_KEYS.user, JSON.stringify(await uRes.json()));
+  } catch {
+    // Optional profile info
+  }
+}
+
 async function refreshDashboard() {
-  const clientId = localStorage.getItem(STORAGE_KEYS.clientId) || '';
+  await handleOAuthRedirectHash();
+  const clientId = localStorage.getItem(STORAGE_KEYS.clientId) || PRECONFIGURED_CLIENT_ID || '';
+  if (clientId && !localStorage.getItem(STORAGE_KEYS.clientId)) {
+    localStorage.setItem(STORAGE_KEYS.clientId, clientId);
+  }
   document.getElementById('clientIdInput').value = clientId;
   const gateInput = document.getElementById('gateClientIdInput');
   if (gateInput) gateInput.value = clientId;
-  document.getElementById('originUriCode').textContent = window.location.origin;
+  const gateRow = document.getElementById('gateClientRow');
+  if (gateRow) gateRow.classList.toggle('hidden', Boolean(clientId));
+  document.getElementById('originUriCode').textContent = window.location.origin + window.location.pathname;
 
   const badge = document.getElementById('statusBadge');
   const accText = document.getElementById('accountText');
@@ -656,9 +693,9 @@ function startGoogleLogin() {
   if (gateVal) localStorage.setItem(STORAGE_KEYS.clientId, gateVal);
   else if (setupVal) localStorage.setItem(STORAGE_KEYS.clientId, setupVal);
 
-  const clientId = localStorage.getItem(STORAGE_KEYS.clientId);
+  const clientId = localStorage.getItem(STORAGE_KEYS.clientId) || PRECONFIGURED_CLIENT_ID;
   if (!clientId) {
-    showAuthFeedback('Bitte füge zuerst deine Google Client ID oben ein (siehe „Anleitung öffnen“ unter Google-Login).');
+    showAuthFeedback('Bitte füge einmalig deine Google Client ID ein (siehe „Anleitung öffnen“). Danach öffnet der Button direkt die Google-Anmeldeseite.');
     const gateInput = document.getElementById('gateClientIdInput');
     if (gateInput && !document.getElementById('authGate').classList.contains('hidden')) {
       gateInput.focus();
@@ -670,42 +707,17 @@ function startGoogleLogin() {
     return;
   }
 
-  if (!window.google?.accounts?.oauth2) {
-    showAuthFeedback('Google Login-Skript lädt noch oder wird blockiert (z. B. AdBlocker). Bitte in 2 Sekunden erneut klicken.');
-    return;
-  }
-
-  try {
-    state.tokenClient = window.google.accounts.oauth2.initTokenClient({
-      client_id: clientId,
-      scope: GOOGLE_SCOPES,
-      callback: async (resp) => {
-        if (resp.error) {
-          showAuthFeedback(`Google OAuth-Fehler: ${resp.error_description || resp.error}`);
-          return;
-        }
-        document.getElementById('warningBanner').classList.add('hidden');
-        localStorage.setItem(STORAGE_KEYS.token, resp.access_token);
-        localStorage.setItem(STORAGE_KEYS.tokenExp, String(Date.now() + (Number(resp.expires_in || 3600) - 60) * 1000));
-        try {
-          const uRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-            headers: { Authorization: `Bearer ${resp.access_token}` }
-          });
-          if (uRes.ok) localStorage.setItem(STORAGE_KEYS.user, JSON.stringify(await uRes.json()));
-        } catch {
-          // Optional profile info
-        }
-        state.currentView = 'overview';
-        await refreshDashboard();
-      },
-      error_callback: (err) => {
-        showAuthFeedback(`Google Popup-Fehler: ${err?.message || err?.type || 'Popup blockiert oder geschlossen'}`);
-      }
-    });
-    state.tokenClient.requestAccessToken({ prompt: 'consent' });
-  } catch (err) {
-    showAuthFeedback(`Login-Fehler: ${err.message}`);
-  }
+  // Direkt zur echten Google-Anmeldeseite (wie accounts.google.com) weiterleiten
+  const redirectUri = window.location.origin + window.location.pathname;
+  const authParams = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    response_type: 'token',
+    scope: GOOGLE_SCOPES,
+    include_granted_scopes: 'true',
+    prompt: 'consent'
+  });
+  window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${authParams.toString()}`;
 }
 
 // Navigation & Auth Events
@@ -856,6 +868,10 @@ document.getElementById('takeoutInput').addEventListener('change', async (e) => 
     state.currentView = 'overview';
     await refreshDashboard();
   }
+});
+
+window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+  if (state.design.theme === 'system') applyDesign();
 });
 
 applyDesign();
